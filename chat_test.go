@@ -1220,7 +1220,7 @@ func TestChatCompletionsWithAdditionalParameters(t *testing.T) {
 				Content: "Hello!",
 			},
 		},
-		AdditionalBodyParameters: map[string]interface{}{
+		AdditionalParameters: map[string]interface{}{
 			"custom_param": "custom_value",
 			"nested_param": map[string]interface{}{
 				"nested_field": 42,
@@ -1232,14 +1232,14 @@ func TestChatCompletionsWithAdditionalParameters(t *testing.T) {
 	checks.NoError(t, err, "CreateChatCompletion with additional parameters error")
 
 	// Verify the response's additional parameters
-	customValue, exists := resp.AdditionalBodyParameters["echo_param"]
+	customValue, exists := resp.AdditionalParameters["echo_param"]
 	if !exists {
 		t.Error("Expected 'echo_param' in additional parameters but it wasn't there")
 	} else if customValue != "custom_value" {
 		t.Errorf("Expected 'echo_param' to be 'custom_value', got %v", customValue)
 	}
 
-	nestedValue, exists := resp.AdditionalBodyParameters["nested_echo"]
+	nestedValue, exists := resp.AdditionalParameters["nested_echo"]
 	if !exists {
 		t.Error("Expected 'nested_echo' in additional parameters but it wasn't there")
 	} else {
@@ -1309,4 +1309,124 @@ func handleChatCompletionWithAdditionalParamsEndpoint(w http.ResponseWriter, r *
 	responseBytes, _ := json.Marshal(responseData)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintln(w, string(responseBytes))
+}
+
+func TestChatMessageWithAdditionalParameters(t *testing.T) {
+	// Test marshaling message with additional parameters
+	message := openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleUser,
+		Content: "Hello!",
+		AdditionalParameters: map[string]interface{}{
+			"custom_message_param": "custom_value",
+			"nested_message_param": map[string]interface{}{
+				"nested_field": 42,
+			},
+		},
+	}
+
+	// Marshal the message
+	data, err := json.Marshal(message)
+	checks.NoError(t, err, "Error marshaling message with additional parameters")
+
+	// Parse the JSON to verify additional parameters are included
+	var parsedData map[string]interface{}
+	err = json.Unmarshal(data, &parsedData)
+	checks.NoError(t, err, "Error parsing marshaled message")
+
+	// Check standard fields
+	if parsedData["role"] != "user" {
+		t.Errorf("Expected role to be 'user', got %v", parsedData["role"])
+	}
+	if parsedData["content"] != "Hello!" {
+		t.Errorf("Expected content to be 'Hello!', got %v", parsedData["content"])
+	}
+
+	// Check additional parameters
+	customValue, exists := parsedData["custom_message_param"]
+	if !exists {
+		t.Error("Expected 'custom_message_param' in marshaled message but it wasn't there")
+	} else if customValue != "custom_value" {
+		t.Errorf("Expected 'custom_message_param' to be 'custom_value', got %v", customValue)
+	}
+
+	nestedParam, exists := parsedData["nested_message_param"]
+	if !exists {
+		t.Error("Expected 'nested_message_param' in marshaled message but it wasn't there")
+	} else {
+		nestedMap, ok := nestedParam.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected 'nested_message_param' to be a map, got %T", nestedParam)
+		} else if nestedField, ok := nestedMap["nested_field"]; !ok || nestedField != float64(42) {
+			t.Errorf("Expected 'nested_message_param.nested_field' to be 42, got %v", nestedField)
+		}
+	}
+
+	// Test unmarshaling message with additional parameters
+	jsonData := `{
+		"role": "assistant", 
+		"content": "I'm an AI", 
+		"custom_response_param": "response_value",
+		"nested_response_param": {"response_field": 24}
+	}`
+
+	var unmarshaledMessage openai.ChatCompletionMessage
+	err = json.Unmarshal([]byte(jsonData), &unmarshaledMessage)
+	checks.NoError(t, err, "Error unmarshaling message with additional parameters")
+
+	// Check standard fields
+	if unmarshaledMessage.Role != "assistant" {
+		t.Errorf("Expected role to be 'assistant', got %v", unmarshaledMessage.Role)
+	}
+	if unmarshaledMessage.Content != "I'm an AI" {
+		t.Errorf("Expected content to be 'I'm an AI', got %v", unmarshaledMessage.Content)
+	}
+
+	// Check additional parameters
+	customResponseValue, exists := unmarshaledMessage.AdditionalParameters["custom_response_param"]
+	if !exists {
+		t.Error("Expected 'custom_response_param' in unmarshaled message but it wasn't there")
+	} else if customResponseValue != "response_value" {
+		t.Errorf("Expected 'custom_response_param' to be 'response_value', got %v", customResponseValue)
+	}
+
+	nestedResponseParam, exists := unmarshaledMessage.AdditionalParameters["nested_response_param"]
+	if !exists {
+		t.Error("Expected 'nested_response_param' in unmarshaled message but it wasn't there")
+	} else {
+		nestedMap, ok := nestedResponseParam.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected 'nested_response_param' to be a map, got %T", nestedResponseParam)
+		} else if responseField, ok := nestedMap["response_field"]; !ok || responseField != float64(24) {
+			t.Errorf("Expected 'nested_response_param.response_field' to be 24, got %v", responseField)
+		}
+	}
+
+	// Test with MultiContent
+	multiContentMessage := openai.ChatCompletionMessage{
+		Role: openai.ChatMessageRoleUser,
+		MultiContent: []openai.ChatMessagePart{
+			{
+				Type: openai.ChatMessagePartTypeText,
+				Text: "Hello with image",
+			},
+		},
+		AdditionalParameters: map[string]interface{}{
+			"multi_content_param": "multi_value",
+		},
+	}
+
+	multiData, err := json.Marshal(multiContentMessage)
+	checks.NoError(t, err, "Error marshaling message with MultiContent and additional parameters")
+
+	var parsedMultiData map[string]interface{}
+	err = json.Unmarshal(multiData, &parsedMultiData)
+	checks.NoError(t, err, "Error parsing marshaled multi-content message")
+
+	// Check additional parameters in multi-content message
+	multiValue, exists := parsedMultiData["multi_content_param"]
+	if !exists {
+		t.Error("Expected 'multi_content_param' in marshaled multi-content message but it wasn't there")
+	} else if multiValue != "multi_value" {
+		t.Errorf("Expected 'multi_content_param' to be 'multi_value', got %v", multiValue)
+	}
 }

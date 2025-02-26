@@ -18,6 +18,45 @@ type ChatCompletionStreamChoiceDelta struct {
 	// the doc from deepseek:
 	// - https://api-docs.deepseek.com/api/create-chat-completion#responses
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+
+	// AdditionalParameters contains any additional parameters returned by the API server
+	// that are not explicitly defined in this struct
+	AdditionalParameters map[string]interface{} `json:"-"`
+}
+
+// UnmarshalJSON provides a custom unmarshaller for ChatCompletionStreamChoiceDelta to capture additional fields
+func (d *ChatCompletionStreamChoiceDelta) UnmarshalJSON(data []byte) error {
+	type Alias ChatCompletionStreamChoiceDelta
+	aux := struct {
+		*Alias
+	}{
+		Alias: (*Alias)(d),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Capture all fields in a map
+	var mapData map[string]interface{}
+	if err := json.Unmarshal(data, &mapData); err != nil {
+		return err
+	}
+
+	// Remove the standard fields from the map to identify additional fields
+	delete(mapData, "content")
+	delete(mapData, "role")
+	delete(mapData, "function_call")
+	delete(mapData, "tool_calls")
+	delete(mapData, "refusal")
+	delete(mapData, "reasoning_content")
+
+	// Store remaining fields in AdditionalParameters
+	if len(mapData) > 0 {
+		d.AdditionalParameters = mapData
+	}
+
+	return nil
 }
 
 type ChatCompletionStreamChoiceLogprobs struct {
@@ -64,9 +103,9 @@ type ChatCompletionStreamResponse struct {
 	// When present, it contains a null value except for the last chunk which contains the token usage statistics
 	// for the entire request.
 	Usage *Usage `json:"usage,omitempty"`
-	// AdditionalBodyParameters contains any additional parameters returned by the API server
+	// AdditionalParameters contains any additional parameters returned by the API server
 	// that are not explicitly defined in this struct
-	AdditionalBodyParameters map[string]interface{} `json:"-"`
+	AdditionalParameters map[string]interface{} `json:"-"`
 }
 
 // UnmarshalJSON provides a custom unmarshaller for ChatCompletionStreamResponse to capture additional fields
@@ -99,9 +138,9 @@ func (r *ChatCompletionStreamResponse) UnmarshalJSON(data []byte) error {
 	delete(mapData, "prompt_filter_results")
 	delete(mapData, "usage")
 
-	// Store remaining fields in AdditionalBodyParameters
+	// Store remaining fields in AdditionalParameters
 	if len(mapData) > 0 {
-		r.AdditionalBodyParameters = mapData
+		r.AdditionalParameters = mapData
 	}
 
 	return nil

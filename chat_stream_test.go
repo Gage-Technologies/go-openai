@@ -1051,9 +1051,9 @@ func TestCreateChatCompletionStreamWithAdditionalParameters(t *testing.T) {
 
 		// Stream back chunks with additional parameters
 		dataList := []string{
-			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"content":"Hello"}, "finish_reason":null}], "additional_stream_param":"value1", "nested_stream":{"field":1}}`,
-			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"content":" world"}, "finish_reason":null}], "additional_stream_param":"value2", "nested_stream":{"field":2}}`,
-			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{}, "finish_reason":"stop"}], "additional_stream_param":"value3", "nested_stream":{"field":3}}`,
+			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"content":"Hello", "custom_delta_param":"delta1", "nested_delta":{"field":1}}, "finish_reason":null}], "additional_stream_param":"value1", "nested_stream":{"field":1}}`,
+			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"content":" world", "custom_delta_param":"delta2", "nested_delta":{"field":2}}, "finish_reason":null}], "additional_stream_param":"value2", "nested_stream":{"field":2}}`,
+			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"custom_delta_param":"delta3", "nested_delta":{"field":3}}, "finish_reason":"stop"}], "additional_stream_param":"value3", "nested_stream":{"field":3}}`,
 		}
 
 		for _, data := range dataList {
@@ -1072,7 +1072,7 @@ func TestCreateChatCompletionStreamWithAdditionalParameters(t *testing.T) {
 			},
 		},
 		Stream: true,
-		AdditionalBodyParameters: map[string]interface{}{
+		AdditionalParameters: map[string]interface{}{
 			"custom_stream_param": "test_value",
 			"nested_request": map[string]interface{}{
 				"field": "value",
@@ -1087,7 +1087,8 @@ func TestCreateChatCompletionStreamWithAdditionalParameters(t *testing.T) {
 	expectedContent := "Hello world"
 	actualContent := ""
 
-	var additionalValues []string
+	var additionalResponseValues []string
+	var additionalDeltaValues []string
 
 	// Read from the stream
 	for {
@@ -1105,9 +1106,17 @@ func TestCreateChatCompletionStreamWithAdditionalParameters(t *testing.T) {
 			actualContent += response.Choices[0].Delta.Content
 		}
 
-		// Check for additional parameters
-		if additionalParam, exists := response.AdditionalBodyParameters["additional_stream_param"]; exists {
-			additionalValues = append(additionalValues, additionalParam.(string))
+		// Check for additional parameters in response
+		if additionalParam, exists := response.AdditionalParameters["additional_stream_param"]; exists {
+			additionalResponseValues = append(additionalResponseValues, additionalParam.(string))
+		}
+
+		// Check for additional parameters in delta
+		if len(response.Choices) > 0 {
+			delta := response.Choices[0].Delta
+			if additionalParam, exists := delta.AdditionalParameters["custom_delta_param"]; exists {
+				additionalDeltaValues = append(additionalDeltaValues, additionalParam.(string))
+			}
 		}
 	}
 
@@ -1116,14 +1125,26 @@ func TestCreateChatCompletionStreamWithAdditionalParameters(t *testing.T) {
 		t.Errorf("Expected content to be %q, but got %q", expectedContent, actualContent)
 	}
 
-	// Verify additional parameters
-	expectedValues := []string{"value1", "value2", "value3"}
-	if len(additionalValues) != len(expectedValues) {
-		t.Errorf("Expected %d additional parameter values, got %d", len(expectedValues), len(additionalValues))
+	// Verify additional response parameters
+	expectedResponseValues := []string{"value1", "value2", "value3"}
+	if len(additionalResponseValues) != len(expectedResponseValues) {
+		t.Errorf("Expected %d additional response parameter values, got %d", len(expectedResponseValues), len(additionalResponseValues))
 	} else {
-		for i, val := range expectedValues {
-			if additionalValues[i] != val {
-				t.Errorf("Expected value %q at position %d, got %q", val, i, additionalValues[i])
+		for i, val := range expectedResponseValues {
+			if additionalResponseValues[i] != val {
+				t.Errorf("Expected response value %q at position %d, got %q", val, i, additionalResponseValues[i])
+			}
+		}
+	}
+
+	// Verify additional delta parameters
+	expectedDeltaValues := []string{"delta1", "delta2", "delta3"}
+	if len(additionalDeltaValues) != len(expectedDeltaValues) {
+		t.Errorf("Expected %d additional delta parameter values, got %d", len(expectedDeltaValues), len(additionalDeltaValues))
+	} else {
+		for i, val := range expectedDeltaValues {
+			if additionalDeltaValues[i] != val {
+				t.Errorf("Expected delta value %q at position %d, got %q", val, i, additionalDeltaValues[i])
 			}
 		}
 	}
