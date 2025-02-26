@@ -111,14 +111,22 @@ type ChatCompletionMessage struct {
 
 	// For Role=tool prompts this should be set to the ID given in the assistant's prior request to call a tool.
 	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	// AdditionalParameters contains any additional parameters not explicitly defined in this struct
+	// This can be useful for experimental or beta features
+	AdditionalParameters map[string]interface{} `json:"-"`
 }
 
 func (m ChatCompletionMessage) MarshalJSON() ([]byte, error) {
 	if m.Content != "" && m.MultiContent != nil {
 		return nil, ErrContentFieldsMisused
 	}
+
+	var data []byte
+	var err error
+
 	if len(m.MultiContent) > 0 {
-		msg := struct {
+		type MultiContentMessage struct {
 			Role         string            `json:"role"`
 			Content      string            `json:"-"`
 			Refusal      string            `json:"refusal,omitempty"`
@@ -127,25 +135,68 @@ func (m ChatCompletionMessage) MarshalJSON() ([]byte, error) {
 			FunctionCall *FunctionCall     `json:"function_call,omitempty"`
 			ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
 			ToolCallID   string            `json:"tool_call_id,omitempty"`
-		}(m)
-		return json.Marshal(msg)
+		}
+		msg := MultiContentMessage{
+			Role:         m.Role,
+			Content:      m.Content,
+			Refusal:      m.Refusal,
+			MultiContent: m.MultiContent,
+			Name:         m.Name,
+			FunctionCall: m.FunctionCall,
+			ToolCalls:    m.ToolCalls,
+			ToolCallID:   m.ToolCallID,
+		}
+		data, err = json.Marshal(msg)
+	} else {
+		type StandardMessage struct {
+			Role         string            `json:"role"`
+			Content      string            `json:"content,omitempty"`
+			Refusal      string            `json:"refusal,omitempty"`
+			MultiContent []ChatMessagePart `json:"-"`
+			Name         string            `json:"name,omitempty"`
+			FunctionCall *FunctionCall     `json:"function_call,omitempty"`
+			ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
+			ToolCallID   string            `json:"tool_call_id,omitempty"`
+		}
+		msg := StandardMessage{
+			Role:         m.Role,
+			Content:      m.Content,
+			Refusal:      m.Refusal,
+			MultiContent: m.MultiContent,
+			Name:         m.Name,
+			FunctionCall: m.FunctionCall,
+			ToolCalls:    m.ToolCalls,
+			ToolCallID:   m.ToolCallID,
+		}
+		data, err = json.Marshal(msg)
 	}
 
-	msg := struct {
-		Role         string            `json:"role"`
-		Content      string            `json:"content,omitempty"`
-		Refusal      string            `json:"refusal,omitempty"`
-		MultiContent []ChatMessagePart `json:"-"`
-		Name         string            `json:"name,omitempty"`
-		FunctionCall *FunctionCall     `json:"function_call,omitempty"`
-		ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
-		ToolCallID   string            `json:"tool_call_id,omitempty"`
-	}(m)
-	return json.Marshal(msg)
+	if err != nil || m.AdditionalParameters == nil {
+		return data, err
+	}
+
+	// Add the additional parameters
+	var mapData map[string]interface{}
+	if err = json.Unmarshal(data, &mapData); err != nil {
+		return data, err
+	}
+
+	for k, v := range m.AdditionalParameters {
+		mapData[k] = v
+	}
+
+	return json.Marshal(mapData)
 }
 
 func (m *ChatCompletionMessage) UnmarshalJSON(bs []byte) error {
-	msg := struct {
+	// First capture all fields in a map to identify additional fields
+	var mapData map[string]interface{}
+	if err := json.Unmarshal(bs, &mapData); err != nil {
+		return err
+	}
+
+	// Try to unmarshal as regular message
+	type StandardMessage struct {
 		Role         string `json:"role"`
 		Content      string `json:"content,omitempty"`
 		Refusal      string `json:"refusal,omitempty"`
@@ -154,26 +205,64 @@ func (m *ChatCompletionMessage) UnmarshalJSON(bs []byte) error {
 		FunctionCall *FunctionCall `json:"function_call,omitempty"`
 		ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
 		ToolCallID   string        `json:"tool_call_id,omitempty"`
-	}{}
+	}
 
-	if err := json.Unmarshal(bs, &msg); err == nil {
-		*m = ChatCompletionMessage(msg)
-		return nil
+	var standardMsg StandardMessage
+	regularUnmarshalSucceeded := true
+	if err := json.Unmarshal(bs, &standardMsg); err != nil {
+		regularUnmarshalSucceeded = false
 	}
-	multiMsg := struct {
-		Role         string `json:"role"`
-		Content      string
-		Refusal      string            `json:"refusal,omitempty"`
-		MultiContent []ChatMessagePart `json:"content"`
-		Name         string            `json:"name,omitempty"`
-		FunctionCall *FunctionCall     `json:"function_call,omitempty"`
-		ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
-		ToolCallID   string            `json:"tool_call_id,omitempty"`
-	}{}
-	if err := json.Unmarshal(bs, &multiMsg); err != nil {
-		return err
+
+	if regularUnmarshalSucceeded {
+		m.Role = standardMsg.Role
+		m.Content = standardMsg.Content
+		m.Refusal = standardMsg.Refusal
+		m.MultiContent = standardMsg.MultiContent
+		m.Name = standardMsg.Name
+		m.FunctionCall = standardMsg.FunctionCall
+		m.ToolCalls = standardMsg.ToolCalls
+		m.ToolCallID = standardMsg.ToolCallID
+	} else {
+		// Try to unmarshal as multi-content message
+		type MultiContentMessage struct {
+			Role         string `json:"role"`
+			Content      string
+			Refusal      string            `json:"refusal,omitempty"`
+			MultiContent []ChatMessagePart `json:"content"`
+			Name         string            `json:"name,omitempty"`
+			FunctionCall *FunctionCall     `json:"function_call,omitempty"`
+			ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
+			ToolCallID   string            `json:"tool_call_id,omitempty"`
+		}
+		var multiMsg MultiContentMessage
+		if err := json.Unmarshal(bs, &multiMsg); err != nil {
+			return err
+		}
+
+		m.Role = multiMsg.Role
+		m.Content = multiMsg.Content
+		m.Refusal = multiMsg.Refusal
+		m.MultiContent = multiMsg.MultiContent
+		m.Name = multiMsg.Name
+		m.FunctionCall = multiMsg.FunctionCall
+		m.ToolCalls = multiMsg.ToolCalls
+		m.ToolCallID = multiMsg.ToolCallID
 	}
-	*m = ChatCompletionMessage(multiMsg)
+
+	// Remove standard fields from the map to identify additional fields
+	delete(mapData, "role")
+	delete(mapData, "content")
+	delete(mapData, "refusal")
+	delete(mapData, "name")
+	delete(mapData, "function_call")
+	delete(mapData, "tool_calls")
+	delete(mapData, "tool_call_id")
+
+	// Store remaining fields as additional parameters
+	if len(mapData) > 0 {
+		m.AdditionalParameters = mapData
+	}
+
 	return nil
 }
 
@@ -263,12 +352,12 @@ type ChatCompletionRequest struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Metadata to store with the completion.
 	Metadata map[string]string `json:"metadata,omitempty"`
-	// AdditionalBodyParameters allows passing additional parameters not explicitly defined in this struct
+	// AdditionalParameters allows passing additional parameters not explicitly defined in this struct
 	// This can be useful for experimental or beta features
-	AdditionalBodyParameters map[string]interface{} `json:"-"`
+	AdditionalParameters map[string]interface{} `json:"-"`
 }
 
-// MarshalJSON provides a custom marshaller for the ChatCompletionRequest to include AdditionalBodyParameters
+// MarshalJSON provides a custom marshaller for the ChatCompletionRequest to include AdditionalParameters
 func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
 	type Alias ChatCompletionRequest
 	aliasValue := struct {
@@ -278,7 +367,7 @@ func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
 	}
 
 	data, err := json.Marshal(aliasValue)
-	if err != nil || r.AdditionalBodyParameters == nil {
+	if err != nil || r.AdditionalParameters == nil {
 		return data, err
 	}
 
@@ -289,7 +378,7 @@ func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
 	}
 
 	// Add the additional parameters to the map
-	for k, v := range r.AdditionalBodyParameters {
+	for k, v := range r.AdditionalParameters {
 		mapData[k] = v
 	}
 
@@ -404,9 +493,9 @@ type ChatCompletionResponse struct {
 	Usage               Usage                  `json:"usage"`
 	SystemFingerprint   string                 `json:"system_fingerprint"`
 	PromptFilterResults []PromptFilterResult   `json:"prompt_filter_results,omitempty"`
-	// AdditionalBodyParameters contains any additional parameters returned by the API server
+	// AdditionalParameters contains any additional parameters returned by the API server
 	// that are not explicitly defined in this struct
-	AdditionalBodyParameters map[string]interface{} `json:"-"`
+	AdditionalParameters map[string]interface{} `json:"-"`
 
 	httpHeader
 }
@@ -440,9 +529,9 @@ func (r *ChatCompletionResponse) UnmarshalJSON(data []byte) error {
 	delete(mapData, "system_fingerprint")
 	delete(mapData, "prompt_filter_results")
 
-	// Store remaining fields in AdditionalBodyParameters
+	// Store remaining fields in AdditionalParameters
 	if len(mapData) > 0 {
-		r.AdditionalBodyParameters = mapData
+		r.AdditionalParameters = mapData
 	}
 
 	return nil
