@@ -263,6 +263,37 @@ type ChatCompletionRequest struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Metadata to store with the completion.
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// AdditionalBodyParameters allows passing additional parameters not explicitly defined in this struct
+	// This can be useful for experimental or beta features
+	AdditionalBodyParameters map[string]interface{} `json:"-"`
+}
+
+// MarshalJSON provides a custom marshaller for the ChatCompletionRequest to include AdditionalBodyParameters
+func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
+	type Alias ChatCompletionRequest
+	aliasValue := struct {
+		Alias
+	}{
+		Alias: (Alias)(r),
+	}
+
+	data, err := json.Marshal(aliasValue)
+	if err != nil || r.AdditionalBodyParameters == nil {
+		return data, err
+	}
+
+	mapData := make(map[string]interface{})
+	err = json.Unmarshal(data, &mapData)
+	if err != nil {
+		return data, err
+	}
+
+	// Add the additional parameters to the map
+	for k, v := range r.AdditionalBodyParameters {
+		mapData[k] = v
+	}
+
+	return json.Marshal(mapData)
 }
 
 type StreamOptions struct {
@@ -373,8 +404,48 @@ type ChatCompletionResponse struct {
 	Usage               Usage                  `json:"usage"`
 	SystemFingerprint   string                 `json:"system_fingerprint"`
 	PromptFilterResults []PromptFilterResult   `json:"prompt_filter_results,omitempty"`
+	// AdditionalBodyParameters contains any additional parameters returned by the API server
+	// that are not explicitly defined in this struct
+	AdditionalBodyParameters map[string]interface{} `json:"-"`
 
 	httpHeader
+}
+
+// UnmarshalJSON provides a custom unmarshaller for ChatCompletionResponse to capture additional fields
+func (r *ChatCompletionResponse) UnmarshalJSON(data []byte) error {
+	type Alias ChatCompletionResponse
+	aux := struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Capture all fields in a map
+	var mapData map[string]interface{}
+	if err := json.Unmarshal(data, &mapData); err != nil {
+		return err
+	}
+
+	// Remove the standard fields from the map to identify additional fields
+	delete(mapData, "id")
+	delete(mapData, "object")
+	delete(mapData, "created")
+	delete(mapData, "model")
+	delete(mapData, "choices")
+	delete(mapData, "usage")
+	delete(mapData, "system_fingerprint")
+	delete(mapData, "prompt_filter_results")
+
+	// Store remaining fields in AdditionalBodyParameters
+	if len(mapData) > 0 {
+		r.AdditionalBodyParameters = mapData
+	}
+
+	return nil
 }
 
 // CreateChatCompletion — API call to Create a completion for the chat message.
