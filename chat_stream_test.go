@@ -1021,3 +1021,110 @@ func compareChatStreamResponseChoices(c1, c2 openai.ChatCompletionStreamChoice) 
 	}
 	return true
 }
+
+func TestCreateChatCompletionStreamWithAdditionalParameters(t *testing.T) {
+	client, server, teardown := setupOpenAITestServer()
+	defer teardown()
+	server.RegisterHandler("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		// Read and decode the request body to check for additional parameters
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "could not read request", http.StatusInternalServerError)
+			return
+		}
+		defer r.Body.Close()
+
+		// Parse the JSON to verify additional parameters are included
+		var requestData map[string]interface{}
+		if err = json.Unmarshal(body, &requestData); err != nil {
+			http.Error(w, "could not parse request", http.StatusInternalServerError)
+			return
+		}
+
+		// Check if the custom parameter was included
+		if _, exists := requestData["custom_stream_param"]; !exists {
+			http.Error(w, "missing custom parameter", http.StatusBadRequest)
+			return
+		}
+
+		// Stream back chunks with additional parameters
+		dataList := []string{
+			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"content":"Hello"}, "finish_reason":null}], "additional_stream_param":"value1", "nested_stream":{"field":1}}`,
+			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{"content":" world"}, "finish_reason":null}], "additional_stream_param":"value2", "nested_stream":{"field":2}}`,
+			`{"id":"1", "object":"chat.completion.chunk", "created":1, "model":"gpt-3.5-turbo", "choices":[{"index":0, "delta":{}, "finish_reason":"stop"}], "additional_stream_param":"value3", "nested_stream":{"field":3}}`,
+		}
+
+		for _, data := range dataList {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			w.(http.Flusher).Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+	})
+
+	req := openai.ChatCompletionRequest{
+		Model: openai.GPT3Dot5Turbo,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: "Hello!",
+			},
+		},
+		Stream: true,
+		AdditionalBodyParameters: map[string]interface{}{
+			"custom_stream_param": "test_value",
+			"nested_request": map[string]interface{}{
+				"field": "value",
+			},
+		},
+	}
+
+	stream, err := client.CreateChatCompletionStream(context.Background(), req)
+	checks.NoError(t, err, "CreateChatCompletionStream returned error")
+	defer stream.Close()
+
+	expectedContent := "Hello world"
+	actualContent := ""
+
+	var additionalValues []string
+
+	// Read from the stream
+	for {
+		response, streamErr := stream.Recv()
+		if streamErr != nil {
+			if streamErr == io.EOF {
+				break
+			}
+			t.Errorf("Stream error: %v", streamErr)
+			break
+		}
+
+		// Check for content
+		if len(response.Choices) > 0 && response.Choices[0].Delta.Content != "" {
+			actualContent += response.Choices[0].Delta.Content
+		}
+
+		// Check for additional parameters
+		if additionalParam, exists := response.AdditionalBodyParameters["additional_stream_param"]; exists {
+			additionalValues = append(additionalValues, additionalParam.(string))
+		}
+	}
+
+	// Verify content
+	if actualContent != expectedContent {
+		t.Errorf("Expected content to be %q, but got %q", expectedContent, actualContent)
+	}
+
+	// Verify additional parameters
+	expectedValues := []string{"value1", "value2", "value3"}
+	if len(additionalValues) != len(expectedValues) {
+		t.Errorf("Expected %d additional parameter values, got %d", len(expectedValues), len(additionalValues))
+	} else {
+		for i, val := range expectedValues {
+			if additionalValues[i] != val {
+				t.Errorf("Expected value %q at position %d, got %q", val, i, additionalValues[i])
+			}
+		}
+	}
+}

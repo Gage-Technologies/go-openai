@@ -1205,3 +1205,108 @@ func TestChatCompletionRequest_UnmarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestChatCompletionsWithAdditionalParameters(t *testing.T) {
+	client, server, teardown := setupOpenAITestServer()
+	defer teardown()
+	server.RegisterHandler("/v1/chat/completions", handleChatCompletionWithAdditionalParamsEndpoint)
+
+	// Test with additional request parameters
+	req := openai.ChatCompletionRequest{
+		Model: openai.GPT3Dot5Turbo,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: "Hello!",
+			},
+		},
+		AdditionalBodyParameters: map[string]interface{}{
+			"custom_param": "custom_value",
+			"nested_param": map[string]interface{}{
+				"nested_field": 42,
+			},
+		},
+	}
+
+	resp, err := client.CreateChatCompletion(context.Background(), req)
+	checks.NoError(t, err, "CreateChatCompletion with additional parameters error")
+
+	// Verify the response's additional parameters
+	customValue, exists := resp.AdditionalBodyParameters["echo_param"]
+	if !exists {
+		t.Error("Expected 'echo_param' in additional parameters but it wasn't there")
+	} else if customValue != "custom_value" {
+		t.Errorf("Expected 'echo_param' to be 'custom_value', got %v", customValue)
+	}
+
+	nestedValue, exists := resp.AdditionalBodyParameters["nested_echo"]
+	if !exists {
+		t.Error("Expected 'nested_echo' in additional parameters but it wasn't there")
+	} else {
+		// Type assertion to access nested map
+		nestedMap, ok := nestedValue.(map[string]interface{})
+		if !ok {
+			t.Errorf("Expected 'nested_echo' to be a map, got %T", nestedValue)
+		} else if nestedField, ok := nestedMap["echo_field"]; !ok || nestedField != float64(42) {
+			t.Errorf("Expected 'nested_echo.echo_field' to be 42, got %v", nestedField)
+		}
+	}
+}
+
+// handleChatCompletionWithAdditionalParamsEndpoint Handles the ChatGPT completion endpoint with additional parameters
+func handleChatCompletionWithAdditionalParamsEndpoint(w http.ResponseWriter, r *http.Request) {
+	var err error
+
+	// completions only accepts POST requests
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+
+	// Read and decode the request body to check for additional parameters
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "could not read request", http.StatusInternalServerError)
+		return
+	}
+	r.Body.Close()
+
+	// Parse the JSON to verify additional parameters are included
+	var requestData map[string]interface{}
+	if err = json.Unmarshal(body, &requestData); err != nil {
+		http.Error(w, "could not parse request", http.StatusInternalServerError)
+		return
+	}
+
+	// Create basic response
+	responseData := map[string]interface{}{
+		"id":      strconv.Itoa(int(time.Now().Unix())),
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   requestData["model"],
+		"choices": []map[string]interface{}{
+			{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": "Test response",
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     10,
+			"completion_tokens": 10,
+			"total_tokens":      20,
+		},
+		// Add additional response parameters
+		"echo_param": requestData["custom_param"],
+		"nested_echo": map[string]interface{}{
+			"echo_field": requestData["nested_param"].(map[string]interface{})["nested_field"],
+		},
+	}
+
+	// Serialize and return the response
+	responseBytes, _ := json.Marshal(responseData)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintln(w, string(responseBytes))
+}

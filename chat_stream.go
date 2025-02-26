@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 )
 
@@ -63,6 +64,47 @@ type ChatCompletionStreamResponse struct {
 	// When present, it contains a null value except for the last chunk which contains the token usage statistics
 	// for the entire request.
 	Usage *Usage `json:"usage,omitempty"`
+	// AdditionalBodyParameters contains any additional parameters returned by the API server
+	// that are not explicitly defined in this struct
+	AdditionalBodyParameters map[string]interface{} `json:"-"`
+}
+
+// UnmarshalJSON provides a custom unmarshaller for ChatCompletionStreamResponse to capture additional fields
+func (r *ChatCompletionStreamResponse) UnmarshalJSON(data []byte) error {
+	type Alias ChatCompletionStreamResponse
+	aux := struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Capture all fields in a map
+	var mapData map[string]interface{}
+	if err := json.Unmarshal(data, &mapData); err != nil {
+		return err
+	}
+
+	// Remove the standard fields from the map to identify additional fields
+	delete(mapData, "id")
+	delete(mapData, "object")
+	delete(mapData, "created")
+	delete(mapData, "model")
+	delete(mapData, "choices")
+	delete(mapData, "system_fingerprint")
+	delete(mapData, "prompt_annotations")
+	delete(mapData, "prompt_filter_results")
+	delete(mapData, "usage")
+
+	// Store remaining fields in AdditionalBodyParameters
+	if len(mapData) > 0 {
+		r.AdditionalBodyParameters = mapData
+	}
+
+	return nil
 }
 
 // ChatCompletionStream
